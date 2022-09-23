@@ -218,17 +218,18 @@ class WebRtcConnection extends EventEmitter {
       await this.onGathered;
     }
 
-    const desc = await this.wrtc.getLocalDescription();
-    if (!desc) {
+    const connectionDescription = await this.wrtc.getLocalDescription();
+    if (!connectionDescription) {
       log.error('message: Cannot get local description on answer,',
         logger.objectToLog(this.options), logger.objectToLog(this.options.metadata));
       return { type: 'answer', sdp: '' };
     }
 
-    this.wrtc.localDescription = new SessionDescription(desc, undefined);
-    const sdp = this.wrtc.localDescription.getSdp(this.sessionVersion);
+    this.wrtc.localDescription =
+      SessionDescription.fromConnectionDescription(connectionDescription);
+    const semanticSdpInfo = this.wrtc.localDescription.getSemanticSdpInfo(this.sessionVersion);
     this.sessionVersion += 1;
-    let message = sdp.toString();
+    let message = semanticSdpInfo.toString();
     message = message.replace(this.options.privateRegexp, this.options.publicIP);
     return { type: 'answer', sdp: message };
   }
@@ -241,17 +242,18 @@ class WebRtcConnection extends EventEmitter {
     if (!this.trickleIce) {
       await this.onGathered;
     }
-    const desc = await this.wrtc.getLocalDescription();
-    if (!this.wrtc || !desc) {
+    const connectionDescription = await this.wrtc.getLocalDescription();
+    if (!this.wrtc || !connectionDescription) {
       log.error('Cannot get local description,',
         logger.objectToLog(this.options), logger.objectToLog(this.options.metadata));
       return { type: 'offer', sdp: '' };
     }
 
-    this.wrtc.localDescription = new SessionDescription(desc, undefined);
-    const sdp = this.wrtc.localDescription.getSdp(this.sessionVersion);
+    this.wrtc.localDescription =
+      SessionDescription.fromConnectionDescription(connectionDescription);
+    const semanticSdpInfo = this.wrtc.localDescription.getSemanticSdpInfo(this.sessionVersion);
     this.sessionVersion += 1;
-    let message = sdp.toString();
+    let message = semanticSdpInfo.toString();
     message = message.replace(this.options.privateRegexp, this.options.publicIP);
     return { type: 'offer', sdp: message };
   }
@@ -266,12 +268,13 @@ class WebRtcConnection extends EventEmitter {
   }
 
   async setRemoteDescription(description) {
-    const sdpInfo = SemanticSdp.SDPInfo.processString(description.sdp);
+    const semanticSdpInfo = SemanticSdp.SDPInfo.processString(description.sdp);
     let oldIceCredentials = ['', ''];
     if (this.wrtc.remoteDescription) {
       oldIceCredentials = this.wrtc.remoteDescription.getICECredentials();
     }
-    this.wrtc.remoteDescription = new SessionDescription(sdpInfo, this.mediaConfiguration);
+    this.wrtc.remoteDescription =
+      SessionDescription.fromSemanticSdpInfo(semanticSdpInfo, this.mediaConfiguration);
     this._logSdp('setRemoteDescription');
     const iceCredentials = this.wrtc.remoteDescription.getICECredentials();
     if (oldIceCredentials[0] !== '' && oldIceCredentials[0] !== iceCredentials[0]) {
@@ -466,11 +469,23 @@ class WebRtcConnection extends EventEmitter {
   static _removeExtensionMappingFromArray(extMappings, extension) {
     const index = extMappings.indexOf(extension);
     if (index > -1) {
-      extMappings.splice(index, index + 1);
+      extMappings.splice(index, 1);
     }
   }
 
+  static _removeFeedbackTypeFromAllCodecs(rtpMappings, extension) {
+    Object.values(rtpMappings).forEach((codec) => {
+      if (codec.feedbackTypes) {
+        const index = codec.feedbackTypes.indexOf(extension);
+        if (index > -1) {
+          codec.feedbackTypes.splice(index, 1);
+        }
+      }
+    });
+  }
+
   static _getMediaConfiguration(mediaConfiguration = 'default', willReceivePublishers = false) {
+    // if it !willReceivePublishers - there's only subscribers - we remove transport-cc if present
     if (global.mediaConfig && global.mediaConfig.codecConfigurations) {
       let config = {};
       if (global.mediaConfig.codecConfigurations[mediaConfiguration]) {
@@ -488,6 +503,12 @@ class WebRtcConnection extends EventEmitter {
           'urn:ietf:params:rtp-hdrext:sdes:mid');
         WebRtcConnection._removeExtensionMappingFromArray(config.extMappings,
           'urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id');
+      }
+      if (willReceivePublishers && config.extMappings) {
+        WebRtcConnection._removeExtensionMappingFromArray(config.extMappings,
+          'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01');
+        WebRtcConnection._removeFeedbackTypeFromAllCodecs(config.rtpMappings,
+          'transport-cc');
       }
       return JSON.stringify(config);
     }

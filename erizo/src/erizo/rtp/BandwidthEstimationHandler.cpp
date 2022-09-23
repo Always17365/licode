@@ -10,7 +10,8 @@
 
 #include "webrtc/modules/remote_bitrate_estimator/remote_bitrate_estimator_abs_send_time.h"
 #include "webrtc/modules/remote_bitrate_estimator/remote_bitrate_estimator_single_stream.h"
-#include "webrtc/base/logging.h"
+#include "webrtc/modules/rtp_rtcp/source/rtp_packet_received.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace erizo {
 
@@ -46,7 +47,10 @@ BandwidthEstimationHandler::BandwidthEstimationHandler(std::shared_ptr<RemoteBit
   min_bitrate_bps_{kMinBitRateAllowed},
   bitrate_{0}, last_send_bitrate_{0}, last_remb_time_{0},
   running_{false}, active_{true}, initialized_{false} {
-    rtc::LogMessage::SetLogToStderr(false);
+    // Print RTC_LOG warnings and errors even in release builds.
+  rtc::LogMessage::ConfigureLogging("tstamp thread error");
+  rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
+  rtc::LogMessage::SetLogToStderr(true);
 }
 
 void BandwidthEstimationHandler::enable() {
@@ -157,6 +161,7 @@ void BandwidthEstimationHandler::read(Context *ctx, std::shared_ptr<DataPacket> 
   RtcpHeader *chead = reinterpret_cast<RtcpHeader*> (packet->data);
   if (!chead->isRtcp() && packet->type == VIDEO_PACKET) {
     if (parsePacket(packet)) {
+      RtpHeader *head = reinterpret_cast<RtpHeader*> (packet->data);
       int64_t arrival_time_ms = packet->received_time_ms;
       arrival_time_ms = clock_->TimeInMilliseconds() - (ClockUtils::timePointToMs(clock::now()) - arrival_time_ms);
       size_t payload_size = packet->length;
@@ -172,10 +177,16 @@ void BandwidthEstimationHandler::read(Context *ctx, std::shared_ptr<DataPacket> 
 bool BandwidthEstimationHandler::parsePacket(std::shared_ptr<DataPacket> packet) {
   const uint8_t* buffer = reinterpret_cast<uint8_t*>(packet->data);
   size_t length = packet->length;
-  webrtc::RtpUtility::RtpHeaderParser rtp_parser(buffer, length);
-  memset(&header_, 0, sizeof(header_));
-  RtpHeaderExtensionMap map = getHeaderExtensionMap(packet);
-  return rtp_parser.Parse(&header_, &map);
+  webrtc::RtpPacket::ExtensionManager extension_manager = getHeaderExtensionMap(packet);
+  webrtc::RtpPacketReceived emptyPacket(&extension_manager);
+  header_ = webrtc::RTPHeader();
+
+  if (emptyPacket.ParseBuffer(buffer, length)) {
+    emptyPacket.GetHeader(&header_);
+    return true;
+  } else {
+    return false;
+  }
 }
 
 RtpHeaderExtensionMap BandwidthEstimationHandler::getHeaderExtensionMap(std::shared_ptr<DataPacket> packet) const {
@@ -258,7 +269,7 @@ void BandwidthEstimationHandler::sendREMBPacket() {
 
   int remb_length = (remb_packet_.getLength() + 1) * 4;
   if (active_) {
-    ELOG_DEBUG("BWE Estimation is %d", last_send_bitrate_);
+    ELOG_DEBUG("BWE Estimation is %d, using absolute: %u", last_send_bitrate_, using_absolute_send_time_);
     getContext()->fireWrite(std::make_shared<DataPacket>(0,
       reinterpret_cast<char*>(&remb_packet_), remb_length, OTHER_PACKET));
   }
