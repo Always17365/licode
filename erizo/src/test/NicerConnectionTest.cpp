@@ -153,6 +153,7 @@ class NicerConnectionTest : public ::testing::Test {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     delete ice_config;
+    io_worker->close();
     free(test_packet);
   }
 
@@ -460,8 +461,10 @@ TEST_F(NicerConnectionTest, getSelectedPair_Calls_Nicer_And_Returns_Pair) {
 
   nr_ice_candidate* local_candidate;
   nr_ice_candidate* remote_candidate;
-  ASSERT_EQ(create_nr_ice_candidate(1, strdup(kArbitraryLocalIp.c_str()),  kArbitraryLocalPort,  &local_candidate), 0);
-  ASSERT_EQ(create_nr_ice_candidate(1, strdup(kArbitraryRemoteIp.c_str()), kArbitraryRemotePort, &remote_candidate), 0);
+  ASSERT_EQ(create_nr_ice_candidate(1, strdup(kArbitraryLocalIp.c_str()),
+   kArbitraryLocalPort,  &local_candidate), 0);
+  ASSERT_EQ(create_nr_ice_candidate(1, strdup(kArbitraryRemoteIp.c_str()),
+   kArbitraryRemotePort, &remote_candidate), 0);
 
   EXPECT_CALL(*nicer, IceMediaStreamGetActive(_, _, _, _, _)).Times(1).WillOnce(
     DoAll(SetArgPointee<3>(local_candidate), SetArgPointee<4>(remote_candidate), Return(true)));
@@ -483,3 +486,4 @@ TEST_F(NicerConnectionTest, setRemoteCredentials_Configures_NicerCandidate) {
   EXPECT_CALL(*nicer, IcePeerContextStartChecks2(_, _)).Times(1).WillOnce(Return(0));
   nicer_connection->setRemoteCredentials(kArbitraryUsername, kArbitraryPassword);
 }
+

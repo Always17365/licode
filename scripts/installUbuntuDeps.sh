@@ -116,7 +116,7 @@ install_mongodb(){
 }
 
 install_conan(){
-  sudo pip3 install conan==1.52
+  sudo pip3 install conan==1.62.0
 }
 
 install_cpplint(){
@@ -144,6 +144,7 @@ install_openssl(){
   if [ -d $LIB_DIR ]; then
     cd $LIB_DIR
     OPENSSL_VERSION=`node -pe process.versions.openssl`
+    OPENSSL_VERSION=${OPENSSL_VERSION%+*}
     if [ ! -f ./openssl-$OPENSSL_VERSION.tar.gz ]; then
       download_openssl $OPENSSL_VERSION
       cd openssl-$OPENSSL_VERSION
